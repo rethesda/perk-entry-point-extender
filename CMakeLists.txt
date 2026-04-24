@@ -6,7 +6,7 @@ message("Using toolchain file ${CMAKE_TOOLCHAIN_FILE}.")
 ########################################################################################################################
 project(
         PerkEntryPointExtender
-        VERSION 2.2.4.6
+        VERSION 2.3.4.0
         DESCRIPTION "Expands entry points and exposes them through papyrus functions."
         LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
@@ -21,7 +21,9 @@ configure_file(
         @ONLY)
 
 set(headers
-    include/PerkEntryPointExtenderAPI.h)
+    include/PerkEntryPointExtenderAPI.h
+    src/API_ActorValueGenerator.h
+)
 
 set(sources
         src/main.cpp
@@ -30,6 +32,7 @@ set(sources
         src/Hooks.h
         src/Handle.h
         src/Utility.h
+        src/ScriptFunction.h
         src/PerkEntryPointExtenderAPI.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
 
@@ -70,6 +73,24 @@ target_include_directories(${PROJECT_NAME}
 target_precompile_headers(${PROJECT_NAME}
         PRIVATE
         src/PCH.h)
+
+
+        
+if (NOT LexiconSKSEPath)
+	cmake_path(GET CMAKE_CURRENT_SOURCE_DIR PARENT_PATH CMAKE_REPO_DIR)
+	set(LexiconSKSEPath "${CMAKE_REPO_DIR}/lexicon-skse")
+endif()
+
+add_subdirectory(${LexiconSKSEPath} LexiconSKSE)
+add_dependencies(${PROJECT_NAME} LexiconSKSE::LexiconSKSE)
+
+target_link_libraries(
+	${PROJECT_NAME}
+	PRIVATE
+        Lexicon::Lexicon
+        LexiconSKSE::LexiconSKSE
+)
+
 
 install(TARGETS ${PROJECT_NAME}
         DESTINATION "${CMAKE_INSTALL_LIBDIR}")

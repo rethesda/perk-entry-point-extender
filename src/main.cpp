@@ -2,6 +2,7 @@
 #include "EntryPoint.h"
 #include "Papyrus.h"
 #include "Utility.h"
+#include "ScriptFunction.h"
 
 using namespace SKSE;
 using namespace SKSE::log;
@@ -9,6 +10,9 @@ using namespace SKSE::stl;
 
 //using namespace SOS;
 //using namespace RGL;
+
+
+
 
 void InitializeLogging() 
 {
@@ -71,6 +75,8 @@ void InitializeMessaging() {
             break;
 
         case MessagingInterface::kDataLoaded:
+            PEPE::BGSPerkEntry_ConditionEvalHook::Install();
+            PEPE::Script::Register();
             PEPE::EntryPointHandler::CategorizePerkEntries();
             break;
         }
@@ -104,7 +110,7 @@ SKSEPluginLoad(const LoadInterface* skse) {
     log::info("{} {} is loading...", plugin->GetName(), version);
     Init(skse, false);
     
-
+    
     //TODO:Use message system to tell if po3 tweaks is present and the editor ID patch as been enabled
     InitializeMessaging();
 
@@ -119,7 +125,8 @@ SKSEPluginLoad(const LoadInterface* skse) {
     else {
         stl::report_and_fail("Failure to register Papyrus bindings.");
     }
-    
+
+
     log::info("{} has finished loading.", plugin->GetName());
     
     return true;

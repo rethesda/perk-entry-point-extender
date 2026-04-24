@@ -13,6 +13,7 @@
     "openvr",
     "xbyak",
     "magic-enum",
-    "nlohmann-json"
+    "nlohmann-json",
+    "clib-util"
   ]
 }

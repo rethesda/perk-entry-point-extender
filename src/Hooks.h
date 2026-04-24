@@ -230,6 +230,200 @@ namespace PEPE
 		inline static REL::Relocation<decltype(thunk<>)> func[2];
 	};
 
+	struct BGSPerkEntry_ConditionEvalHook
+	{
+		static void Install()
+		{
+			//SE: (337660), AE: (34F4B0), VR: ???
+			auto hook_addr = REL::RelocationID(23332, 23800).address();
+
+			struct Code : Xbyak::CodeGenerator
+			{
+				Code(uintptr_t func)
+				{
+					mov(r9d, ebp);
+					mov(rax, func);
+					jmp(rax);
+				}
+			} static code{ (uintptr_t)thunk };
+
+			auto& trampoline = SKSE::GetTrampoline();
+
+			//Need a pattern to ensure
+			//REL::make_pattern<"EB">() == true;
+
+			func = trampoline.write_call<5>(hook_addr + RELOCATION_OFFSET(0x17C, 0x1FF), (uintptr_t)code.getCode());
+
+
+			logger::info("BGSPerkEntry_ConditionEvalHook complete...");
+		}
+
+
+		
+		static bool thunk(RE::TESCondition& condition, RE::TESObjectREFR* subject, RE::TESObjectREFR* target, uint32_t index)
+		{
+			if (auto extra = EntryPointHandler::GetSecondaryArgument(index); extra.has_value()) {
+				auto form = extra.value();
+				if (!form)
+					return !condition.head;
+				
+				target = ObtainConditionTarget(form);
+				
+				if (!target)
+					return !condition.head;
+			}
+
+			struct ExtraDataListPtr
+			{
+				RE::ExtraDataList* ptr = nullptr;
+				RE::ExtraDataList* other = nullptr;
+				bool locked = false;
+				constexpr ExtraDataListPtr() noexcept = default;
+				constexpr ExtraDataListPtr(RE::ExtraDataList* list) noexcept : ptr{ list } {}
+				constexpr operator bool() const noexcept { return ptr; }
+
+				RE::BaseExtraList* GetBase(RE::ExtraDataList* tar = nullptr)
+				{
+					if (!tar)
+						tar = ptr;
+
+					return reinterpret_cast<RE::BaseExtraList*>(tar);
+				}
+
+				RE::BSReadWriteLock& GetLock(RE::ExtraDataList* tar = nullptr) const noexcept
+				{
+					if (!tar)
+						tar = ptr;
+
+					if SKYRIM_REL_CONSTEXPR(REL::Module::IsAE()) {
+						return *reinterpret_cast<RE::BSReadWriteLock*>(reinterpret_cast<std::uintptr_t>(tar) +
+							(REL::Module::get().version().compare(SKSE::RUNTIME_SSE_1_6_629) == std::strong_ordering::less ? 0x10 : 0x18));
+					}
+					else {
+						return *reinterpret_cast<RE::BSReadWriteLock*>(reinterpret_cast<std::uintptr_t>(tar) + 0x10);
+					}
+				}
+
+
+				void Lock(RE::ExtraDataList* list)
+				{
+
+					other = list;
+					GetLock().LockForRead();
+					locked = true;
+				}
+
+				void AssignToReference(RE::TESObjectREFR* ref)
+				{
+					if (!ref || !ptr)
+						return;
+
+
+					Lock(&ref->extraList);
+
+					auto base = GetBase();
+					auto other_base = GetBase(other);
+					assert(!other_base->GetData());
+					assert(!other_base->GetPresence());
+					other_base->GetData() = base->GetData();
+					other_base->GetPresence() = base->GetPresence();
+
+
+				}
+
+				~ExtraDataListPtr()
+				{
+					if (ptr && locked) {
+						GetLock().UnlockForRead();
+					}
+
+					if (other) {
+						auto other_base = GetBase(other);
+						other_base->GetData() = nullptr;
+						other_base->GetPresence() = nullptr;;
+
+						auto data = RE::GetStaticTLSData();
+
+						if (other = data->cachedExtraDataList) {
+							data->cachedExtraDataList = nullptr;
+							std::memset(data->cachedExtraData, 0, RE::TLSData::CACHED_EXTRA_DATA_SIZE + 8);
+						}
+					}
+				}
+			};
+
+			ExtraDataListPtr subject_list;
+			ExtraDataListPtr target_list;
+
+
+			if (subject) {
+				if (subject_list = EntryPointHandler::GetExtraArgument(true, index)) {
+					subject_list.AssignToReference(subject);
+				}
+			}
+		
+			if (target) {
+				if (target_list = EntryPointHandler::GetExtraArgument(false, index)) {
+					subject_list.AssignToReference(target);
+				}
+			}
+
+			return func(condition, subject, target);
+
+		}
+
+		inline static REL::Relocation<bool(RE::TESCondition&, RE::TESObjectREFR*, RE::TESObjectREFR*)> func;
+	};
+
+
+	struct TEMP_RedoAttackDamageHook
+	{
+		static void  Patch()
+		{
+			auto& trampoline = SKSE::GetTrampoline();
+
+			//SE: 694350, AE: NA, VR: ???
+			auto hit_hook = REL::ID(39215);
+
+			func = trampoline.write_call<5>(hit_hook.address() + 0x56, thunk);
+
+			logger::info("ApplyAttackSpellsHook complete...");
+		}
+
+		//This hook is so ununique btw, that I think I can just write branch this shit. Straight up.
+		static void thunk(RE::PerkEntryPoint ep, RE::Actor* owner, RE::TESObjectWEAP* weapon, RE::Actor* target, float* out)
+		{
+			if (auto hand = owner->GetMiddleHighProcess()->rightHand)
+			{
+				if constexpr (1)
+				{
+					std::vector<RE::TESForm*> args{ hand->object, target };
+					std::vector<RE::ExtraDataList*> extras{ hand->extraLists && hand->extraLists->size() ? hand->extraLists->front() : nullptr, nullptr };
+
+					auto result = RE::HandleEntryPoint(ep, owner, *out, hand, target);
+
+					assert(result == RequestResult::Success);
+				}
+				else
+				{
+					std::vector<RE::TESForm*> args{ hand->object, target };
+					std::vector<RE::ExtraDataList*> extras{ hand->extraLists && hand->extraLists->size() ? hand->extraLists->front() : nullptr, nullptr };
+
+					auto result = EntryPointHandler::ApplyPerkEntryPoint(ep, owner, args, extras, out, "", 0, EntryPointFlag::None);
+
+					assert(result == RequestResult::Success);
+				}
+			}
+			else
+			{
+				return func(ep, owner, weapon, target, out);
+			}
+		}
+
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+
 
 	struct Hooks
 	{
@@ -241,9 +435,10 @@ namespace PEPE
 			//BGSPerk::SetEditorID, we want to intercept this and then rerun the actual function, unless what was there was a 5 byte call
 
 
-			SKSE::AllocTrampoline(14 * 3);
-
-
+			SKSE::AllocTrampoline(14 * 5);
+#ifndef NDEBUG
+			TEMP_RedoAttackDamageHook::Patch();
+#endif
 			//No need for allocation, YAAAAAY!
 			ForEachPerkEntryHook::Install();
 			Condition_HasKeywordHook::Patch();

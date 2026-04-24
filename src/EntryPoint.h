@@ -2,7 +2,7 @@
 
 #include "Handle.h"
 #include "Condition.h"
-
+#include "API_ActorValueGenerator.h"
 
 inline std::unordered_map<RE::BGSPerk*, std::string> legacyEditorIDs;
 
@@ -21,6 +21,10 @@ namespace PEPE
 			std::string category;
 			uint8_t channel;
 			EntryPointFlag flags;
+			std::span<RE::TESForm*> secondaryArgs;
+			std::span<RE::ExtraDataList*> extraPrimaryArgs;
+			std::span<RE::ExtraDataList*> extraSecondaryArgs;
+			float loadedValue[3]{ 0.f, 0.f, 0.f };
 		};
 
 
@@ -127,6 +131,7 @@ namespace PEPE
 		}
 
 		inline static thread_local EntryPointFilter* filterPtr = nullptr;
+		inline static thread_local float epValue = 0;
 
 		static RE::PerkEntryPoint GetPerkEntryPoint(RE::BSFixedString& name)
 		{
@@ -307,7 +312,7 @@ namespace PEPE
 			//If there's no filter on the thread, it's a regular call.
 			auto channel = GetChannel(entry);
 
-			if (!filterPtr)
+			if (!IsFilterActive())
 				//If there's no filter, the category is valid if there is no channel.
 				return !channel;
 
@@ -316,7 +321,7 @@ namespace PEPE
 			uint8_t filter = filterPtr->channel;
 
 			//If the channel doesn't match the current filter OR the filter isn't set to any, It is invalid.
-			if (channel != filter || filter == 255)
+			if (channel != filter && filter != 255)
 				return false;
 
 			//If it's not within the group, don't run it.
@@ -360,7 +365,7 @@ namespace PEPE
 			logger::debug("{}", __COUNTER__);
 
 			//If there's no filter, it passes if no match, fails if there was one.
-			if (!filterPtr) {
+			if (!IsFilterActive()) {
 				logger::debug("{}", comp);
 				return false;
 			}
@@ -398,12 +403,12 @@ namespace PEPE
 
 			auto& conditions = entry->conditions;
 
-			logger::debug("{}", entry->perk->GetName());
+			//logger::debug("{}", entry->perk->GetName());
 
 			if (conditions.size() == 0)
 				return !filterPtr;
 
-			logger::debug("{}", __COUNTER__);
+			//logger::debug("{}", __COUNTER__);
 
 			RE::TESConditionItem* head = conditions[0].head;
 
@@ -430,7 +435,7 @@ namespace PEPE
 
 		static bool IsCategoryValidNEW(RE::BGSEntryPointPerkEntry* entry)
 		{
-			logger::debug("{}~ {}", entry->perk->GetName(), !!filterPtr);
+			//logger::debug("{}~ {}", entry->perk->GetName(), IsFilterActive());
 			//This is ugly as shit.
 			//bool do_legacy = true;
 
@@ -445,7 +450,46 @@ namespace PEPE
 
 		static bool IsFilterActive()
 		{
-			return !filterPtr;
+			return filterPtr && filterPtr->channel;
+		}
+
+		static std::string_view GetCategory()
+		{
+			return filterPtr ? filterPtr->category.substr(groupHeader.size()) : "[:INACTIVE:]";
+		}
+
+		static EntryPointFilter* ObtainFilterPtr(EntryPointFilter& filter) {
+			if (!filterPtr) {
+				filterPtr = &filter;
+			}
+
+			return filterPtr;
+		}
+
+		static std::optional<RE::TESForm*> GetSecondaryArgument(uint32_t index)
+		{
+			if (!index || !filterPtr || filterPtr->secondaryArgs.empty())
+				return std::nullopt;
+
+			index--;
+
+			return filterPtr->secondaryArgs[index];
+		}
+
+		static RE::ExtraDataList* GetExtraArgument(bool primary, uint32_t index)
+		{
+			if (!index || !filterPtr )
+				return nullptr;
+
+			index--;
+
+			auto& args = primary ? filterPtr->extraPrimaryArgs : filterPtr->extraSecondaryArgs;
+
+			if (args.empty() == true) {
+				return nullptr;
+			}
+
+			return args[index];
 		}
 
 
@@ -482,8 +526,8 @@ namespace PEPE
 
 
 		//These should likely use references in some of these, to reduce the creating and shit.
-		static RequestResult ApplyPerkEntryPoint(RE::PerkEntryPoint entry_point, RE::Actor* target, std::vector<RE::TESForm*>& args, void* out, 
-			const RE::BSFixedString& category, uint8_t channel, EntryPointFlag flags)
+		static RequestResult ApplyPerkEntryPoint(RE::PerkEntryPoint entry_point, RE::Actor* target, std::span<RE::TESForm*> args, std::span<RE::ExtraDataList*> extras, void* out, 
+			const std::string_view& category, uint8_t channel, EntryPointFlag flags)
 		{
 			if (!target) {
 				logger::error("no actor given");
@@ -524,9 +568,68 @@ namespace PEPE
 			//I want to clean this with some kind of defered call, maybe something with temporal flags when I get RGL in here.
 			if (!category.empty() && channel) 
 			{
-				filter.category += category;
-				filterPtr = &filter;
+				ObtainFilterPtr(filter)->category += category;
 			}
+
+
+
+			
+			if (flags & EntryPointFlag::Paired) {
+				{
+					auto size = args.size();
+
+					if (size % 2 != 0) {
+						return RequestResult::UnmatchedArgs;
+					}
+
+					size /= 2;
+
+					ObtainFilterPtr(filter)->secondaryArgs = args.subspan(size);
+
+					args = args.subspan(0, size);
+				}
+				
+				if (auto size = extras.size())
+				{
+					if (size % 2 != 0) {
+						return RequestResult::UnmatchedArgs;
+					}
+					size /= 2;
+					ObtainFilterPtr(filter)->extraSecondaryArgs = extras.subspan(size);
+					
+					if (filter.extraSecondaryArgs.size() != filter.secondaryArgs.size()) {
+						return RequestResult::UnmatchedArgs;
+					}
+
+					for (int i = 0; i < size; i++) {
+						if (filter.extraSecondaryArgs[i] && filter.secondaryArgs[i]->AsReference() != nullptr) {
+							return RequestResult::BadExtraData;
+						}
+					}
+
+
+					extras = extras.subspan(0, size);
+				}
+
+			}
+
+			if (auto size = extras.size())
+			{
+				if (args.size() != size) {
+					return RequestResult::UnmatchedArgs;
+				}
+
+				for (int i = 0; i < size; i++) {
+					if (extras[i] && args[i]->AsReference() != nullptr) {
+						return RequestResult::BadExtraData;
+					}
+				}
+
+				ObtainFilterPtr(filter)->extraPrimaryArgs = extras;
+
+
+			}
+
 
 			//I would like to make a special function for this, which has the option of stopping right here, or resuming.
 			// I can use InvalidAPI (A thing that's never used here) to tell what happens.
@@ -639,6 +742,20 @@ namespace PEPE
 					flags = (EntryPointFlag)(flags | flag.value());
 			}
 
+			
+			switch (entry_point)
+			{
+			case RE::PerkEntryPoint::kApplyBashingSpell:
+			case RE::PerkEntryPoint::kApplyCombatHitSpell:
+			case RE::PerkEntryPoint::kApplyReanimateSpell:
+			case RE::PerkEntryPoint::kApplySneakingSpell:
+			case RE::PerkEntryPoint::kApplyWeaponSwingSpell:
+				if (kernels_fix) {
+					flags = (EntryPointFlag)(flags | EntryPointFlag::PRIVATE_UsesCollection);
+				}
+				break;
+			}
+
 			Handle* handle = h_id ? HandleManager::GetHandle(h_id) : nullptr;
 
 
@@ -693,7 +810,7 @@ namespace PEPE
 
 			if (fire) 
 			{
-				RequestResult result = ApplyPerkEntryPoint(entry_point, target, args, out, category, channel - 1, flags);
+				RequestResult result = ApplyPerkEntryPoint(entry_point, target, args, {}, out, category, channel - 1, flags);
 				fire = false;
 				switch (result)
 				{
@@ -852,6 +969,21 @@ namespace PEPE
 				form_count, _s[form_count != 1],
 				entry_count, _y[entry_count != 1]);
 
+		}
+		
+		static float GetEPValue(bool clear = false)
+		{
+			float result = epValue;
+			
+			if (clear)
+				epValue = 0;
+
+			return result;
+		}
+
+		static void SetEPValue(float value)
+		{
+			epValue = value;
 		}
 	};
 

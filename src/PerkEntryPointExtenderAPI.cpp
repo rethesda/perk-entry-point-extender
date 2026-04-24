@@ -11,24 +11,40 @@ namespace PerkEntryPointExtenderAPI
 		Version GetVersion() override { return Version::Current; }
 
 		//Deprecated version. Cannot handle vectors properly.
-		RequestResult ApplyPerkEntryPoint_Deprecated(RE::Actor* target, RE::PerkEntryPoint a_entryPoint, ABIContainer<RE::TESForm*> arg_list, void* out, const char* cat, uint8_t channel) override
+		RequestResult ApplyPerkEntryPoint_Deprecated(RE::Actor* target, RE::PerkEntryPoint a_entryPoint, std::span<RE::TESForm*> arg_list, void* out, const char* cat, uint8_t channel) override
 		{
 			std::vector<RE::TESForm*> args{ arg_list.data(), arg_list.data() +  arg_list.size() };
 			//RE::BSFixedString category = cat;
 			
-			return PEPE::EntryPointHandler::ApplyPerkEntryPoint(a_entryPoint, target, args, out, cat, channel, EntryPointFlag::None);
+			return PEPE::EntryPointHandler::ApplyPerkEntryPoint(a_entryPoint, target, args, {}, out, cat, channel, EntryPointFlag::None);
 		}
 
-		RequestResult ApplyPerkEntryPoint(RE::Actor* target, RE::PerkEntryPoint a_entryPoint, ABIContainer<RE::TESForm*> arg_list, void* out, const char* cat, 
+		inline RequestResult ApplyPerkEntryPoint_Deprecated(RE::Actor* target, RE::PerkEntryPoint a_entryPoint, std::span<RE::TESForm*> args, void* out, const char* cat,
 			uint8_t channel, EntryPointFlag flags) override
 		{
-			void* in = nullptr;
-			std::vector<RE::TESForm*> buffer{ 1 };
+			return ApplyPerkEntryPoint(target, a_entryPoint, args, {}, out, cat, channel, flags);
+		}
 
-			if (flags & EntryPointFlag::UsesCollection) {
+
+
+
+		RequestResult ApplyPerkEntryPoint(RE::Actor* target, RE::PerkEntryPoint a_entryPoint,
+			std::span<RE::TESForm*> args, std::span<RE::ExtraDataList*> extras, void* out,
+			const std::string_view& category, uint8_t channel, EntryPointFlag flags) override
+		{
+			if (flags >= EntryPointFlag::PRIVATE_Total) {
+				return RequestResult::UnknownFlags;
+			}
+
+			void* in;
+
+			std::vector<RE::SpellItem*> buffer{ 1 };
+
+			if (flags & EntryPointFlag::PRIVATE_UsesCollection) {
 				in = kernels_fix ? &buffer : (void*)buffer.data();
 			}
-			else if (kernels_fix) {
+			else {
+
 				switch (a_entryPoint)
 				{
 				case RE::PerkEntryPoint::kApplyBashingSpell:
@@ -36,20 +52,22 @@ namespace PerkEntryPointExtenderAPI
 				case RE::PerkEntryPoint::kApplyReanimateSpell:
 				case RE::PerkEntryPoint::kApplySneakingSpell:
 				case RE::PerkEntryPoint::kApplyWeaponSwingSpell:
-					in = &buffer;
+					if (kernels_fix) {
+						in = &buffer;
+						break;
+					}
+					[[fallthrough]];
+
+				default:
+					in = out;
 					break;
 				}
 			}
-			else {
-				in = out;
-			}
 
-			std::vector<RE::TESForm*> args{ arg_list.data(), arg_list.data() + arg_list.size() };
-			//RE::BSFixedString category = cat;
 
-			auto result = PEPE::EntryPointHandler::ApplyPerkEntryPoint(a_entryPoint, target, args, out, cat, channel, flags);
-			
-			if (flags & EntryPointFlag::UsesCollection) {
+			auto result = PEPE::EntryPointHandler::ApplyPerkEntryPoint(a_entryPoint, target, args, extras, in, category, channel, flags);
+
+			if (flags & EntryPointFlag::PRIVATE_UsesCollection) {
 				IFormCollection* collection = reinterpret_cast<IFormCollection*>(out);
 
 				for (auto entry : buffer)
@@ -67,6 +85,11 @@ namespace PerkEntryPointExtenderAPI
 		}
 
 
+		virtual std::string_view GetCurrentCategory() override
+		{
+			return PEPE::EntryPointHandler::GetCategory();
+		}
+
 	};
 
 
@@ -83,17 +106,7 @@ namespace PerkEntryPointExtenderAPI
 
 		if (result && result->GetVersion() >= version)
 			return result;
-		//Unsure if I actually will get rid of this. If I ever do multiple inherit it will be useful.
-		/*
-		switch (version)
-		{
-		case Version::Version1:
-			return dynamic_cast<InterfaceVersion1*>(result);
-		default:
-			//Should show an error or something like that.
-			return nullptr;
-		}
-		//*/
+	
 		return nullptr;
 	}
 }

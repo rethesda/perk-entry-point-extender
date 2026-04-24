@@ -118,10 +118,12 @@
 using namespace std::literals;
 using namespace REL::literals;
 
-namespace logger = SKSE::log;
+
 
 #include "PerkEntryPointExtenderAPI.h"
-
+#include "API_ActorValueGenerator.h"
+#include "Lexicon.h"
+#include "GameObjectStuff.h"
 #include "Utility.h"
 
 //TODO: Get rid of this

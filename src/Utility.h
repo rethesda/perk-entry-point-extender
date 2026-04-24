@@ -19,7 +19,7 @@ namespace PEPE
         return func(av_name);
     }
 
-    inline static bool kernels_fix = false;
+    inline bool kernels_fix = false;
 
     static void ScrambugsPatch()
     {
@@ -36,7 +36,7 @@ namespace PEPE
 
         try
         {
-            bool kernels_fix = scrambugs_json["patches"]["perkEntryPoints"]["applyMultipleSpells"].get<bool>();
+            kernels_fix = scrambugs_json["patches"]["perkEntryPoints"]["applyMultipleSpells"].get<bool>();
 
             if (kernels_fix) {
                 logger::info("Scrambled bugs applyMultipleSpells patch detected.");
@@ -51,5 +51,26 @@ namespace PEPE
         }
     }
 
+    inline RE::TESObjectREFR* ObtainConditionTarget(RE::TESForm* form)
+    {
+
+        if (form)
+        {
+            if (auto ref = form->AsReference())
+            {
+                return ref;
+            }
+
+            static RE::TESObjectREFR* conditionRef = RE::IFormFactory::GetConcreteFormFactoryByType<RE::TESObjectREFR>()->Create();
+
+            if (form->IsBoundObject() == true) {
+                conditionRef->SetObjectReference(static_cast<RE::TESBoundObject*>(form));
+                return conditionRef;
+            }
+
+        }
+
+        return nullptr;
+    }
 
 }
